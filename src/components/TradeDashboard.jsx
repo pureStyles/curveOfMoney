@@ -2,6 +2,70 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import ReactECharts from 'echarts-for-react';
 
+const parseDateValue = (value) => {
+  if (value instanceof Date) return new Date(value);
+
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  const compactMatch = text.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactMatch) {
+    const [, year, month, day] = compactMatch;
+    return new Date(`${year}/${month}/${day}`);
+  }
+
+  const parsed = new Date(text.replace(/[.-]/g, '/'));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getRangeFilteredData = (allDays, rangeKey) => {
+  if (!allDays.length || rangeKey === 'ALL') return allDays;
+
+  const latestDate = parseDateValue(allDays[allDays.length - 1].date);
+  if (!latestDate) return allDays;
+
+  const rangeStart = new Date(latestDate);
+
+  if (rangeKey === 'WTD') {
+    const dayOfWeek = rangeStart.getDay();
+    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    rangeStart.setDate(rangeStart.getDate() - diffToMonday);
+  }
+
+  if (rangeKey === 'MTD') {
+    rangeStart.setDate(1);
+  }
+
+  rangeStart.setHours(0, 0, 0, 0);
+
+  return allDays.filter((day) => {
+    const currentDate = parseDateValue(day.date);
+    return currentDate && currentDate >= rangeStart && currentDate <= latestDate;
+  });
+};
+
+const getDerivedDailySeries = (allDays) => {
+  return allDays.map((day, index) => {
+    const previousBalance = index > 0 ? Number(allDays[index - 1].balance) || 0 : 0;
+    const balance = Number(day.balance) || 0;
+    const profitAmount = index === 0 ? 0 : balance - previousBalance;
+    const profitRate = index === 0 || previousBalance === 0 ? 0 : (profitAmount / previousBalance) * 100;
+
+    return {
+      ...day,
+      profitAmount,
+      profitRate
+    };
+  });
+};
+
+const formatCurrency = (value) => `¥${Number(value || 0).toFixed(2)}`;
+const formatPercent = (value) => `${Number(value || 0).toFixed(2)}%`;
+const formatDateLabel = (value) => {
+  const date = parseDateValue(value);
+  return date ? date.toLocaleDateString('zh-CN') : String(value || '');
+};
+
 export default function TradeDashboard() {
   // 从 LocalStorage 初始化数据，防止刷新页面丢失
   const [dailyData, setDailyData] = useState(() => {
@@ -10,12 +74,21 @@ export default function TradeDashboard() {
   });
 
   const [metrics, setMetrics] = useState({ winRate: 0, plRatio: 0, totalFee: 0 });
+  const [selectedRange, setSelectedRange] = useState('ALL');
 
-  // 监听数据变化，实时同步到本地缓存并重新计算综合指标
+  // 监听数据变化，实时同步到本地缓存
   useEffect(() => {
     localStorage.setItem('curve_of_money_data', JSON.stringify(dailyData));
-    calculateMetrics(dailyData);
   }, [dailyData]);
+
+  const filteredDailyData = getRangeFilteredData(dailyData, selectedRange);
+  const derivedDailyData = getDerivedDailySeries(filteredDailyData);
+  const latestDay = derivedDailyData[derivedDailyData.length - 1];
+
+  // 数据或筛选区间变化时，重新计算综合指标
+  useEffect(() => {
+    calculateMetrics(filteredDailyData);
+  }, [dailyData, selectedRange]);
 
   // 解析上传的 Excel
   const handleFileUpload = async (e) => {
@@ -120,7 +193,7 @@ export default function TradeDashboard() {
     }
 
     // 重新按时间升序排列，确保曲线连续
-    const sortedData = updatedData.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const sortedData = updatedData.sort((a, b) => parseDateValue(a.date) - parseDateValue(b.date));
     setDailyData(sortedData);
   };
 
@@ -173,43 +246,101 @@ export default function TradeDashboard() {
 
   // ECharts 渲染配置项
   const getChartOption = () => {
-    const dates = dailyData.map(d => d.date);
-    const balances = dailyData.map(d => d.balance);
-    
-    let currentTotalFee = 0;
-    const cumulativeFees = dailyData.map(d => {
-      currentTotalFee += (d.fee || 0);
-      return currentTotalFee.toFixed(2);
-    });
+    const derivedData = derivedDailyData;
+    const dates = derivedData.map(d => d.date);
+    const balances = derivedData.map(d => Number(d.balance).toFixed(2));
+    const profitAmounts = derivedData.map(d => d.profitAmount.toFixed(2));
+    const profitRates = derivedData.map(d => d.profitRate.toFixed(2));
 
     return {
-      title: { text: '账户资产与累计手续费曲线', left: 'center', textStyle: { fontSize: 16 } },
-      tooltip: { trigger: 'axis', shared: true },
-      legend: { data: ['客户权益 (资产)', '累计手续费'], top: '8%' },
-      grid: { top: '20%', bottom: '12%', left: '8%', right: '8%' },
+      title: { text: '权益资金曲线与每日收益表现', left: 'center', textStyle: { fontSize: 16 } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'cross' },
+        formatter: (params) => {
+          const day = derivedData[params[0]?.dataIndex];
+          if (!day) return '';
+
+          return [
+            `${day.date}`,
+            `权益资金: ${formatCurrency(day.balance)}`,
+            `每日收益金额: ${formatCurrency(day.profitAmount)}`,
+            `每日收益率: ${formatPercent(day.profitRate)}`
+          ].join('<br/>');
+        }
+      },
+      legend: { data: ['权益资金曲线', '每日收益金额', '每日收益率'], top: '8%' },
+      grid: { top: '20%', bottom: '12%', left: '8%', right: '14%' },
       xAxis: { type: 'category', data: dates, boundaryGap: false },
       yAxis: [
-        { type: 'value', name: '账户资金/权益', position: 'left', scale: true },
-        { type: 'value', name: '累计手续费', position: 'right', scale: true, splitLine: { show: false } }
+        {
+          type: 'value',
+          name: '权益资金',
+          position: 'left',
+          scale: true,
+          axisLabel: { formatter: (value) => formatCurrency(value) }
+        },
+        {
+          type: 'value',
+          name: '收益金额',
+          position: 'right',
+          scale: true,
+          splitLine: { show: false },
+          axisLabel: { formatter: (value) => formatCurrency(value) }
+        },
+        {
+          type: 'value',
+          name: '收益率',
+          position: 'right',
+          offset: 80,
+          scale: true,
+          splitLine: { show: false },
+          axisLabel: { formatter: (value) => `${Number(value).toFixed(2)}%` }
+        }
       ],
       series: [
         {
-          name: '客户权益 (资产)', type: 'line', data: balances, smooth: true,
+          name: '权益资金曲线',
+          type: 'line',
+          data: balances,
+          smooth: true,
           itemStyle: { color: '#3f51b5' },
           areaStyle: {
             color: {
               type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
               colorStops: [{ offset: 0, color: 'rgba(63,81,181,0.2)' }, { offset: 1, color: 'rgba(63,81,181,0)' }]
             }
-          }
+          },
+          lineStyle: { width: 3 }
         },
         {
-          name: '累计手续费', type: 'line', yAxisIndex: 1, data: cumulativeFees, smooth: true,
-          itemStyle: { color: '#ff9800' }
+          name: '每日收益金额',
+          type: 'bar',
+          yAxisIndex: 1,
+          data: profitAmounts,
+          itemStyle: {
+            color: (params) => Number(params.value) >= 0 ? '#4caf50' : '#f44336'
+          },
+          barMaxWidth: 18
+        },
+        {
+          name: '每日收益率',
+          type: 'line',
+          yAxisIndex: 2,
+          data: profitRates,
+          smooth: true,
+          itemStyle: { color: '#ff9800' },
+          lineStyle: { width: 2 },
+          symbolSize: 7
         }
       ]
     };
   };
+  const rangeOptions = [
+    { key: 'ALL', label: '全部' },
+    { key: 'WTD', label: 'WTD' },
+    { key: 'MTD', label: 'MTD' }
+  ];
 
   return (
     <div style={{ padding: '24px', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
@@ -228,6 +359,28 @@ export default function TradeDashboard() {
         </label>
       </div>
 
+      {dailyData.length > 0 && (
+        <div style={filterBarStyle}>
+          <span style={{ ...labelStyle, fontSize: '15px' }}>查看区间</span>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {rangeOptions.map((option) => (
+              <button
+                key={option.key}
+                onClick={() => setSelectedRange(option.key)}
+                style={selectedRange === option.key ? activeFilterBtnStyle : filterBtnStyle}
+              >
+                {option.label}
+              </button>
+            ))}
+            {filteredDailyData.length > 0 && (
+              <span style={{ color: '#666', fontSize: '13px' }}>
+                {formatDateLabel(filteredDailyData[0].date)} - {formatDateLabel(filteredDailyData[filteredDailyData.length - 1].date)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 指标展示卡片 */}
       <div style={{ display: 'flex', gap: '20px', marginBottom: '30px' }}>
         <div style={cardStyle}>
@@ -244,17 +397,42 @@ export default function TradeDashboard() {
         </div>
       </div>
 
+      {derivedDailyData.length > 0 && (
+        <div style={{ display: 'flex', gap: '20px', marginBottom: '24px' }}>
+          <div style={cardStyle}>
+            <span style={labelStyle}>📈 最新权益资金</span>
+            <p style={{ fontSize: '28px', color: '#3f51b5', margin: '6px 0', fontWeight: 'bold' }}>
+              {formatCurrency(latestDay.balance)}
+            </p>
+          </div>
+          <div style={cardStyle}>
+            <span style={labelStyle}>🧾 最新日收益金额</span>
+            <p style={{ fontSize: '28px', color: latestDay.profitAmount >= 0 ? '#4caf50' : '#f44336', margin: '6px 0', fontWeight: 'bold' }}>
+              {formatCurrency(latestDay.profitAmount)}
+            </p>
+          </div>
+          <div style={cardStyle}>
+            <span style={labelStyle}>📅 最新日收益率</span>
+            <p style={{ fontSize: '28px', color: latestDay.profitRate >= 0 ? '#ff9800' : '#f44336', margin: '6px 0', fontWeight: 'bold' }}>
+              {formatPercent(latestDay.profitRate)}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* 图表视图切换 */}
-      {dailyData.length >= 2 ? (
+      {filteredDailyData.length >= 2 ? (
         <div style={chartContainerStyle}>
           <ReactECharts option={getChartOption()} style={{ height: '500px' }} />
         </div>
-      ) : dailyData.length === 1 ? (
+      ) : filteredDailyData.length === 1 ? (
         <div style={hintBoxStyle}>
-          <p>💡 <strong>已成功录入 1 天的数据！</strong> 资产权益：¥{dailyData[0].balance}。曲线图至少需要 <strong>2 天</strong> 的历史账单数据才能拉出连线。请继续上传其他日期的结算单 Excel 吧！</p>
+          <p>💡 <strong>当前筛选区间只有 1 天数据。</strong> 当前权益资金：{formatCurrency(filteredDailyData[0].balance)}。收益金额和收益率需要至少 <strong>2 天</strong> 的历史账单数据才能计算；你可以继续上传更多账单，或切回“全部”查看完整曲线。</p>
         </div>
       ) : (
-        <p style={{ color: '#999', textAlign: 'center', marginTop: '60px' }}>暂无历史交易数据，请上传结算单文件。</p>
+        <p style={{ color: '#999', textAlign: 'center', marginTop: '60px' }}>
+          {dailyData.length === 0 ? '暂无历史交易数据，请上传结算单文件。' : '当前筛选区间暂无数据，请切换到其他区间查看。'}
+        </p>
       )}
     </div>
   );
@@ -263,6 +441,9 @@ export default function TradeDashboard() {
 const uploadBoxStyle = { marginBottom: '24px', padding: '20px', border: '2px dashed #3f51b5', borderRadius: '8px', textAlign: 'center', background: '#f9f9ff' };
 const cardStyle = { flex: 1, padding: '16px', background: '#f5f5f5', borderRadius: '8px', borderLeft: '5px solid #3f51b5' };
 const labelStyle = { color: '#666', fontSize: '14px' };
+const filterBarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px', padding: '14px 16px', background: '#f6f8fc', border: '1px solid #dde4f0', borderRadius: '10px', flexWrap: 'wrap' };
+const filterBtnStyle = { padding: '8px 14px', borderRadius: '999px', border: '1px solid #c7d2e5', background: '#fff', color: '#44516b', cursor: 'pointer', fontWeight: 600 };
+const activeFilterBtnStyle = { ...filterBtnStyle, background: '#3f51b5', color: '#fff', border: '1px solid #3f51b5', boxShadow: '0 6px 14px rgba(63,81,181,0.18)' };
 const chartContainerStyle = { background: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' };
 const hintBoxStyle = { padding: '20px', background: '#fff8e1', borderLeft: '5px solid #ffb300', borderRadius: '4px', color: '#b78103' };
 const clearBtnStyle = { padding: '8px 14px', background: '#ffebee', color: '#c62828', border: '1px solid #ffcdd2', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
