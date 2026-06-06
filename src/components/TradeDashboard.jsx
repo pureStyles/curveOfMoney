@@ -44,12 +44,19 @@ const getRangeFilteredData = (allDays, rangeKey) => {
   });
 };
 
-const getDerivedDailySeries = (allDays) => {
+const getDerivedDailySeries = (allDays, fullDays = allDays) => {
   return allDays.map((day, index) => {
-    const previousBalance = index > 0 ? Number(allDays[index - 1].balance) || 0 : 0;
+    const fullIndex = fullDays.findIndex((item) => item.date === day.date);
+    const previousDay =
+      fullIndex > 0
+        ? fullDays[fullIndex - 1]
+        : index > 0
+          ? allDays[index - 1]
+          : null;
+    const previousBalance = previousDay ? Number(previousDay.balance) || 0 : 0;
     const balance = Number(day.balance) || 0;
-    const profitAmount = index === 0 ? 0 : balance - previousBalance;
-    const profitRate = index === 0 || previousBalance === 0 ? 0 : (profitAmount / previousBalance) * 100;
+    const profitAmount = previousDay ? balance - previousBalance : 0;
+    const profitRate = previousDay && previousBalance !== 0 ? (profitAmount / previousBalance) * 100 : 0;
 
     return {
       ...day,
@@ -82,7 +89,7 @@ export default function TradeDashboard() {
   }, [dailyData]);
 
   const filteredDailyData = getRangeFilteredData(dailyData, selectedRange);
-  const derivedDailyData = getDerivedDailySeries(filteredDailyData);
+  const derivedDailyData = getDerivedDailySeries(filteredDailyData, dailyData);
   const latestDay = derivedDailyData[derivedDailyData.length - 1];
 
   // 数据或筛选区间变化时，重新计算综合指标
