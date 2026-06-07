@@ -1,0 +1,41 @@
+name: Deploy React App to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main # 🚀 当你向 main 分支推送代码时触发。如果你的主分支叫 master，请改为 master
+
+# 确保 Actions 有权限读取代码并将其写入新的分支
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 拉取仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 安装 Node.js 并设置 npm 缓存（加速后续构建）
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm' # 自动缓存 node_modules，下次构建会非常快
+
+      # 3. 安装项目依赖
+      - name: Install dependencies
+        run: npm ci # 生产环境建议使用 npm ci，比 npm install 更稳定快速
+
+      # 4. 执行项目打包
+      - name: Build project
+        run: npm run build
+
+      # 5. 部署到 GitHub Pages 分支
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist # 📂 Vite 打包后的默认输出目录是 dist
+          branch: gh-pages # 🚀 部署到的目标分支（Actions 会自动创建它）
