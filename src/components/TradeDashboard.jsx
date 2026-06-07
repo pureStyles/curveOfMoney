@@ -82,11 +82,18 @@ export default function TradeDashboard() {
 
   const [metrics, setMetrics] = useState({ winRate: 0, plRatio: 0, totalFee: 0 });
   const [selectedRange, setSelectedRange] = useState('ALL');
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
 
   // 监听数据变化，实时同步到本地缓存
   useEffect(() => {
     localStorage.setItem('curve_of_money_data', JSON.stringify(dailyData));
   }, [dailyData]);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const filteredDailyData = getRangeFilteredData(dailyData, selectedRange);
   const derivedDailyData = getDerivedDailySeries(filteredDailyData, dailyData);
@@ -274,32 +281,54 @@ export default function TradeDashboard() {
             `每日收益金额: ${formatCurrency(day.profitAmount)}`,
             `每日收益率: ${formatPercent(day.profitRate)}`
           ].join('<br/>');
+        },
+        confine: true
+      },
+      legend: {
+        data: ['权益资金曲线', '每日收益金额', '每日收益率'],
+        top: isMobile ? '10%' : '8%',
+        type: isMobile ? 'scroll' : 'plain'
+      },
+      grid: {
+        top: isMobile ? '28%' : '20%',
+        bottom: isMobile ? '18%' : '12%',
+        left: isMobile ? '12%' : '8%',
+        right: isMobile ? '20%' : '14%'
+      },
+      xAxis: {
+        type: 'category',
+        data: dates,
+        boundaryGap: false,
+        axisLabel: {
+          fontSize: isMobile ? 10 : 12,
+          hideOverlap: true
         }
       },
-      legend: { data: ['权益资金曲线', '每日收益金额', '每日收益率'], top: '8%' },
-      grid: { top: '20%', bottom: '12%', left: '8%', right: '14%' },
-      xAxis: { type: 'category', data: dates, boundaryGap: false },
       yAxis: [
         {
           type: 'value',
-          name: '权益资金',
+          name: isMobile ? '权益' : '权益资金',
           position: 'left',
           scale: true,
-          axisLabel: { formatter: (value) => formatCurrency(value) }
+          axisLabel: {
+            formatter: (value) => isMobile ? `${(Number(value) / 10000).toFixed(1)}w` : formatCurrency(value)
+          }
         },
         {
           type: 'value',
-          name: '收益金额',
+          name: isMobile ? '收益额' : '收益金额',
           position: 'right',
           scale: true,
           splitLine: { show: false },
-          axisLabel: { formatter: (value) => formatCurrency(value) }
+          axisLabel: {
+            formatter: (value) => isMobile ? `${(Number(value) / 10000).toFixed(1)}w` : formatCurrency(value)
+          }
         },
         {
           type: 'value',
-          name: '收益率',
+          name: isMobile ? '收益率' : '收益率',
           position: 'right',
-          offset: 80,
+          offset: isMobile ? 48 : 80,
           scale: true,
           splitLine: { show: false },
           axisLabel: { formatter: (value) => `${Number(value).toFixed(2)}%` }
@@ -349,12 +378,39 @@ export default function TradeDashboard() {
     { key: 'MTD', label: 'MTD' }
   ];
 
+  const pageStyle = {
+    padding: isMobile ? '16px 12px 24px' : '24px',
+    fontFamily: 'sans-serif',
+    maxWidth: '1200px',
+    margin: '0 auto'
+  };
+  const headerStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: isMobile ? 'stretch' : 'center',
+    flexDirection: isMobile ? 'column' : 'row',
+    gap: isMobile ? '12px' : 0,
+    marginBottom: '20px'
+  };
+  const metricsWrapStyle = {
+    display: 'flex',
+    gap: isMobile ? '12px' : '20px',
+    marginBottom: '30px',
+    flexDirection: isMobile ? 'column' : 'row'
+  };
+  const summaryWrapStyle = {
+    display: 'flex',
+    gap: isMobile ? '12px' : '20px',
+    marginBottom: '24px',
+    flexDirection: isMobile ? 'column' : 'row'
+  };
+
   return (
-    <div style={{ padding: '24px', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0 }}>📊 curveOfMoney - 交易资产看板</h2>
+    <div style={pageStyle}>
+      <div style={headerStyle}>
+        <h2 style={{ margin: 0, fontSize: isMobile ? '22px' : '28px', lineHeight: 1.3 }}>📊 curveOfMoney - 交易资产看板</h2>
         {dailyData.length > 0 && (
-          <button onClick={handleClearData} style={clearBtnStyle}>🗑️ 清空历史本地数据</button>
+          <button onClick={handleClearData} style={isMobile ? mobileClearBtnStyle : clearBtnStyle}>🗑️ 清空历史本地数据</button>
         )}
       </div>
       
@@ -367,14 +423,14 @@ export default function TradeDashboard() {
       </div>
 
       {dailyData.length > 0 && (
-        <div style={filterBarStyle}>
+        <div style={isMobile ? mobileFilterBarStyle : filterBarStyle}>
           <span style={{ ...labelStyle, fontSize: '15px' }}>查看区间</span>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             {rangeOptions.map((option) => (
               <button
                 key={option.key}
                 onClick={() => setSelectedRange(option.key)}
-                style={selectedRange === option.key ? activeFilterBtnStyle : filterBtnStyle}
+                style={selectedRange === option.key ? (isMobile ? mobileActiveFilterBtnStyle : activeFilterBtnStyle) : (isMobile ? mobileFilterBtnStyle : filterBtnStyle)}
               >
                 {option.label}
               </button>
@@ -389,38 +445,38 @@ export default function TradeDashboard() {
       )}
 
       {/* 指标展示卡片 */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '30px' }}>
+      <div style={metricsWrapStyle}>
         <div style={cardStyle}>
           <span style={labelStyle}>📊 胜率 (Win Rate)</span>
-          <p style={{ fontSize: '28px', color: '#4caf50', margin: '6px 0', fontWeight: 'bold' }}>{metrics.winRate}%</p>
+          <p style={{ fontSize: isMobile ? '24px' : '28px', color: '#4caf50', margin: '6px 0', fontWeight: 'bold' }}>{metrics.winRate}%</p>
         </div>
         <div style={cardStyle}>
           <span style={labelStyle}>⚖️ 盈亏比 (P/L Ratio)</span>
-          <p style={{ fontSize: '28px', color: '#2196f3', margin: '6px 0', fontWeight: 'bold' }}>{metrics.plRatio}</p>
+          <p style={{ fontSize: isMobile ? '24px' : '28px', color: '#2196f3', margin: '6px 0', fontWeight: 'bold' }}>{metrics.plRatio}</p>
         </div>
         <div style={cardStyle}>
           <span style={labelStyle}>💰 累计消耗手续费</span>
-          <p style={{ fontSize: '28px', color: '#ff9800', margin: '6px 0', fontWeight: 'bold' }}>¥{metrics.totalFee}</p>
+          <p style={{ fontSize: isMobile ? '24px' : '28px', color: '#ff9800', margin: '6px 0', fontWeight: 'bold' }}>¥{metrics.totalFee}</p>
         </div>
       </div>
 
       {derivedDailyData.length > 0 && (
-        <div style={{ display: 'flex', gap: '20px', marginBottom: '24px' }}>
+        <div style={summaryWrapStyle}>
           <div style={cardStyle}>
             <span style={labelStyle}>📈 最新权益资金</span>
-            <p style={{ fontSize: '28px', color: '#3f51b5', margin: '6px 0', fontWeight: 'bold' }}>
+            <p style={{ fontSize: isMobile ? '24px' : '28px', color: '#3f51b5', margin: '6px 0', fontWeight: 'bold', wordBreak: 'break-word' }}>
               {formatCurrency(latestDay.balance)}
             </p>
           </div>
           <div style={cardStyle}>
             <span style={labelStyle}>🧾 最新日收益金额</span>
-            <p style={{ fontSize: '28px', color: latestDay.profitAmount >= 0 ? '#4caf50' : '#f44336', margin: '6px 0', fontWeight: 'bold' }}>
+            <p style={{ fontSize: isMobile ? '24px' : '28px', color: latestDay.profitAmount >= 0 ? '#4caf50' : '#f44336', margin: '6px 0', fontWeight: 'bold', wordBreak: 'break-word' }}>
               {formatCurrency(latestDay.profitAmount)}
             </p>
           </div>
           <div style={cardStyle}>
             <span style={labelStyle}>📅 最新日收益率</span>
-            <p style={{ fontSize: '28px', color: latestDay.profitRate >= 0 ? '#ff9800' : '#f44336', margin: '6px 0', fontWeight: 'bold' }}>
+            <p style={{ fontSize: isMobile ? '24px' : '28px', color: latestDay.profitRate >= 0 ? '#ff9800' : '#f44336', margin: '6px 0', fontWeight: 'bold' }}>
               {formatPercent(latestDay.profitRate)}
             </p>
           </div>
@@ -430,7 +486,7 @@ export default function TradeDashboard() {
       {/* 图表视图切换 */}
       {filteredDailyData.length >= 2 ? (
         <div style={chartContainerStyle}>
-          <ReactECharts option={getChartOption()} style={{ height: '500px' }} />
+          <ReactECharts option={getChartOption()} style={{ height: isMobile ? '380px' : '500px' }} />
         </div>
       ) : filteredDailyData.length === 1 ? (
         <div style={hintBoxStyle}>
@@ -446,11 +502,15 @@ export default function TradeDashboard() {
 }
 
 const uploadBoxStyle = { marginBottom: '24px', padding: '20px', border: '2px dashed #3f51b5', borderRadius: '8px', textAlign: 'center', background: '#f9f9ff' };
-const cardStyle = { flex: 1, padding: '16px', background: '#f5f5f5', borderRadius: '8px', borderLeft: '5px solid #3f51b5' };
+const cardStyle = { flex: 1, minWidth: 0, padding: '16px', background: '#f5f5f5', borderRadius: '8px', borderLeft: '5px solid #3f51b5' };
 const labelStyle = { color: '#666', fontSize: '14px' };
 const filterBarStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px', padding: '14px 16px', background: '#f6f8fc', border: '1px solid #dde4f0', borderRadius: '10px', flexWrap: 'wrap' };
 const filterBtnStyle = { padding: '8px 14px', borderRadius: '999px', border: '1px solid #c7d2e5', background: '#fff', color: '#44516b', cursor: 'pointer', fontWeight: 600 };
 const activeFilterBtnStyle = { ...filterBtnStyle, background: '#3f51b5', color: '#fff', border: '1px solid #3f51b5', boxShadow: '0 6px 14px rgba(63,81,181,0.18)' };
+const mobileFilterBarStyle = { ...filterBarStyle, alignItems: 'stretch', padding: '12px', gap: '12px' };
+const mobileFilterBtnStyle = { ...filterBtnStyle, minWidth: '72px', textAlign: 'center' };
+const mobileActiveFilterBtnStyle = { ...activeFilterBtnStyle, minWidth: '72px', textAlign: 'center' };
 const chartContainerStyle = { background: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' };
 const hintBoxStyle = { padding: '20px', background: '#fff8e1', borderLeft: '5px solid #ffb300', borderRadius: '4px', color: '#b78103' };
 const clearBtnStyle = { padding: '8px 14px', background: '#ffebee', color: '#c62828', border: '1px solid #ffcdd2', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
+const mobileClearBtnStyle = { ...clearBtnStyle, width: '100%', justifyContent: 'center' };
