@@ -3,7 +3,8 @@ import * as XLSX from 'xlsx';
 import ReactECharts from 'echarts-for-react';
 
 const STORAGE_KEY = 'curve_of_money_data';
-const SHARED_DATA_URL = `${import.meta.env.BASE_URL}data/trade-data.json`;
+const NORMALIZED_BASE_URL = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const SHARED_DATA_URL = `${NORMALIZED_BASE_URL}data/trade-data.json`;
 
 const parseDateValue = (value) => {
   if (value instanceof Date) return new Date(value);
