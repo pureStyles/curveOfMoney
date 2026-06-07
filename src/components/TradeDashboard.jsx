@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import ReactECharts from 'echarts-for-react';
 
+const STORAGE_KEY = 'curve_of_money_data';
+const SHARED_DATA_URL = `${import.meta.env.BASE_URL}data/trade-data.json`;
+
 const parseDateValue = (value) => {
   if (value instanceof Date) return new Date(value);
 
@@ -44,6 +47,47 @@ const getRangeFilteredData = (allDays, rangeKey) => {
   });
 };
 
+const mergeDailyRecords = (...sources) => {
+  const merged = new Map();
+
+  sources.flat().forEach((item) => {
+    if (!item?.date) return;
+    merged.set(item.date, {
+      date: item.date,
+      balance: Number(item.balance) || 0,
+      fee: Number(item.fee) || 0,
+      trades: Array.isArray(item.trades) ? item.trades : []
+    });
+  });
+
+  return Array.from(merged.values()).sort((a, b) => parseDateValue(a.date) - parseDateValue(b.date));
+};
+
+const readLocalDailyData = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    const parsed = saved ? JSON.parse(saved) : [];
+    return Array.isArray(parsed) ? mergeDailyRecords(parsed) : [];
+  } catch {
+    return [];
+  }
+};
+
+const normalizeSharedPayload = (payload) => {
+  if (Array.isArray(payload)) {
+    return { records: mergeDailyRecords(payload), updatedAt: '' };
+  }
+
+  if (payload && Array.isArray(payload.records)) {
+    return {
+      records: mergeDailyRecords(payload.records),
+      updatedAt: payload.updatedAt || ''
+    };
+  }
+
+  return { records: [], updatedAt: '' };
+};
+
 const getDerivedDailySeries = (allDays, fullDays = allDays) => {
   return allDays.map((day, index) => {
     const fullIndex = fullDays.findIndex((item) => item.date === day.date);
@@ -75,24 +119,49 @@ const formatDateLabel = (value) => {
 
 export default function TradeDashboard() {
   // 从 LocalStorage 初始化数据，防止刷新页面丢失
-  const [dailyData, setDailyData] = useState(() => {
-    const saved = localStorage.getItem('curve_of_money_data');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [dailyData, setDailyData] = useState(() => readLocalDailyData());
 
   const [metrics, setMetrics] = useState({ winRate: 0, plRatio: 0, totalFee: 0 });
   const [selectedRange, setSelectedRange] = useState('ALL');
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
+  const [sharedUpdatedAt, setSharedUpdatedAt] = useState('');
+  const [hasHydratedSharedData, setHasHydratedSharedData] = useState(false);
 
   // 监听数据变化，实时同步到本地缓存
   useEffect(() => {
-    localStorage.setItem('curve_of_money_data', JSON.stringify(dailyData));
-  }, [dailyData]);
+    if (!hasHydratedSharedData) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(dailyData));
+  }, [dailyData, hasHydratedSharedData]);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const loadSharedData = async () => {
+      const localData = readLocalDailyData();
+
+      try {
+        const response = await fetch(SHARED_DATA_URL, { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`Failed to load shared data: ${response.status}`);
+        }
+
+        const payload = await response.json();
+        const normalized = normalizeSharedPayload(payload);
+        setSharedUpdatedAt(normalized.updatedAt);
+        setDailyData(mergeDailyRecords(normalized.records, localData));
+      } catch (error) {
+        console.warn('共享数据文件加载失败，继续使用本地缓存。', error);
+        setDailyData(localData);
+      } finally {
+        setHasHydratedSharedData(true);
+      }
+    };
+
+    loadSharedData();
   }, []);
 
   const filteredDailyData = getRangeFilteredData(dailyData, selectedRange);
@@ -207,8 +276,7 @@ export default function TradeDashboard() {
     }
 
     // 重新按时间升序排列，确保曲线连续
-    const sortedData = updatedData.sort((a, b) => parseDateValue(a.date) - parseDateValue(b.date));
-    setDailyData(sortedData);
+    setDailyData(mergeDailyRecords(updatedData));
   };
 
   // 核心指标计算逻辑
@@ -254,8 +322,25 @@ export default function TradeDashboard() {
   const handleClearData = () => {
     if (window.confirm("确认要清空本地保存的所有历史交易曲线数据吗？")) {
       setDailyData([]);
-      localStorage.removeItem('curve_of_money_data');
+      localStorage.removeItem(STORAGE_KEY);
     }
+  };
+
+  const handleExportSharedData = () => {
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      records: mergeDailyRecords(dailyData)
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'trade-data.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   };
 
   // ECharts 渲染配置项
@@ -392,6 +477,13 @@ export default function TradeDashboard() {
     gap: isMobile ? '12px' : 0,
     marginBottom: '20px'
   };
+  const headerActionsStyle = {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'center',
+    flexDirection: isMobile ? 'column' : 'row',
+    width: isMobile ? '100%' : 'auto'
+  };
   const metricsWrapStyle = {
     display: 'flex',
     gap: isMobile ? '12px' : '20px',
@@ -409,9 +501,14 @@ export default function TradeDashboard() {
     <div style={pageStyle}>
       <div style={headerStyle}>
         <h2 style={{ margin: 0, fontSize: isMobile ? '22px' : '28px', lineHeight: 1.3 }}>📊 curveOfMoney - 交易资产看板</h2>
-        {dailyData.length > 0 && (
-          <button onClick={handleClearData} style={isMobile ? mobileClearBtnStyle : clearBtnStyle}>🗑️ 清空历史本地数据</button>
-        )}
+        <div style={headerActionsStyle}>
+          {dailyData.length > 0 && (
+            <button onClick={handleExportSharedData} style={isMobile ? mobileSecondaryBtnStyle : secondaryBtnStyle}>⬇️ 导出同步文件</button>
+          )}
+          {dailyData.length > 0 && (
+            <button onClick={handleClearData} style={isMobile ? mobileClearBtnStyle : clearBtnStyle}>🗑️ 清空历史本地数据</button>
+          )}
+        </div>
       </div>
       
       {/* 上传区域 */}
@@ -424,7 +521,12 @@ export default function TradeDashboard() {
 
       {dailyData.length > 0 && (
         <div style={isMobile ? mobileFilterBarStyle : filterBarStyle}>
-          <span style={{ ...labelStyle, fontSize: '15px' }}>查看区间</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ ...labelStyle, fontSize: '15px' }}>查看区间</span>
+            <span style={{ color: '#7b879b', fontSize: '12px' }}>
+              {sharedUpdatedAt ? `共享文件更新时间：${formatDateLabel(sharedUpdatedAt)}` : '当前使用本地缓存或尚未生成共享文件'}
+            </span>
+          </div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             {rangeOptions.map((option) => (
               <button
@@ -497,6 +599,10 @@ export default function TradeDashboard() {
           {dailyData.length === 0 ? '暂无历史交易数据，请上传结算单文件。' : '当前筛选区间暂无数据，请切换到其他区间查看。'}
         </p>
       )}
+
+      <div style={syncTipStyle}>
+        <strong>同步说明：</strong> GitHub Pages 不能在网页里直接改仓库文件。PC 端上传完新账单后，请点“导出同步文件”，然后把下载得到的 `trade-data.json` 替换到项目的 `public/data/trade-data.json` 并提交发布。手机端下次打开时会自动合并这份共享数据。
+      </div>
     </div>
   );
 }
@@ -513,4 +619,7 @@ const mobileActiveFilterBtnStyle = { ...activeFilterBtnStyle, minWidth: '72px', 
 const chartContainerStyle = { background: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' };
 const hintBoxStyle = { padding: '20px', background: '#fff8e1', borderLeft: '5px solid #ffb300', borderRadius: '4px', color: '#b78103' };
 const clearBtnStyle = { padding: '8px 14px', background: '#ffebee', color: '#c62828', border: '1px solid #ffcdd2', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
+const secondaryBtnStyle = { padding: '8px 14px', background: '#eef3ff', color: '#2f4aac', border: '1px solid #cdd9ff', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
 const mobileClearBtnStyle = { ...clearBtnStyle, width: '100%', justifyContent: 'center' };
+const mobileSecondaryBtnStyle = { ...secondaryBtnStyle, width: '100%' };
+const syncTipStyle = { marginTop: '24px', padding: '14px 16px', borderRadius: '10px', background: '#f8f9fb', border: '1px solid #e1e6ef', color: '#5b667a', fontSize: '13px', lineHeight: 1.6 };
